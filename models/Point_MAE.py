@@ -379,27 +379,41 @@ class Point_MAE(nn.Module):
 
 
     def forward(self, pts, vis = False, **kwargs):
+        print("group size: ", self.group_size)
+        print("input point cloud shape: ", pts.shape)
         neighborhood, center = self.group_divider(pts)
-
+        print("original center chape: ", center.shape)
         x_vis, mask = self.MAE_encoder(neighborhood, center)
-        B,_,C = x_vis.shape # B VIS C
+        print("center[~mask] and center[mask]", center[~mask].shape, center[mask].shape)
 
+        B,_,C = x_vis.shape # B VIS C
+        print("x_vis shape: ", x_vis.shape)
         pos_emd_vis = self.decoder_pos_embed(center[~mask]).reshape(B, -1, C)
 
         pos_emd_mask = self.decoder_pos_embed(center[mask]).reshape(B, -1, C)
 
         _,N,_ = pos_emd_mask.shape
         mask_token = self.mask_token.expand(B, N, -1)
+        print("mask token shape: ", mask_token.shape)
         x_full = torch.cat([x_vis, mask_token], dim=1)
+        print("x full shape: ", x_full.shape)
         pos_full = torch.cat([pos_emd_vis, pos_emd_mask], dim=1)
 
         x_rec = self.MAE_decoder(x_full, pos_full, N)
-
+        print("x_rec shape: ", x_rec.shape)
         B, M, C = x_rec.shape
         rebuild_points = self.increase_dim(x_rec.transpose(1, 2)).transpose(1, 2).reshape(B * M, -1, 3)  # B M 1024
-
         gt_points = neighborhood[mask].reshape(B*M,-1,3)
+        print("rebuild point and gt point shape: ", rebuild_points.shape, gt_points.shape)
+
         loss1 = self.loss_func(rebuild_points, gt_points)
+
+        original = pts
+        reconstructed = rebuild_points + center[~mask].unsqueeze(1)
+        reconstructed = reconstructed.reshape(-1, 3).unsqueeze(0)
+        print("output shape: ", reconstructed.shape, original.shape, center.shape)
+        return reconstructed, original, center
+
 
         if vis: #visualization
             vis_points = neighborhood[~mask].reshape(B * (self.num_group - M), -1, 3)
@@ -412,6 +426,7 @@ class Point_MAE(nn.Module):
             ret2 = full_vis.reshape(-1, 3).unsqueeze(0)
             ret1 = full.reshape(-1, 3).unsqueeze(0)
             # return ret1, ret2
+            print("ret1, ret2, full_center shape: ", ret1.shape, ret2.shape, full_center.shape)
             return ret1, ret2, full_center
         else:
             return loss1
